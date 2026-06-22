@@ -1,118 +1,121 @@
 # PDDapp — Pinduoduo Price Monitor
 
-A self-hostable service that watches **Pinduoduo (拼多多)** products and alerts you
-when a price drops to or below a threshold you set. It ships with a web dashboard,
-a background scheduler, a JSON API, and email / webhook / console alerting.
+A web app that watches **Pinduoduo (拼多多)** products and alerts you when a price
+drops to or below a threshold you set. Built to deploy on **Vercel**.
 
-## Architecture at a glance
+- **Next.js (App Router, TypeScript)** — dashboard + JSON API
+- **Supabase Postgres** via **Prisma** — products, price history, alert log
+- **Supabase `pg_cron`** (or Vercel Cron) — periodic price checks
+- **Resend** email + webhook + console alerts
+- **Pluggable price fetchers** — a built-in mock fetcher runs the whole app today;
+  a real Pinduoduo source plugs in later
+
+## How it works
 
 ```
-                    ┌──────────────────────────────────────────┐
-   Web dashboard ──▶│  FastAPI app (pddapp/main.py)            │
-   JSON API     ──▶ │   • products, thresholds, history        │
-                    └───────────────┬──────────────────────────┘
-                                    │
-        APScheduler ── every N s ──▶│  monitor.check_all()
-                                    │   ├─ PriceFetcher (pluggable)
-                                    │   │     • mock   (built-in, no network)
-                                    │   │     • pdd    (stub — see below)
-                                    │   ├─ records price history
-                                    │   └─ edge-triggered threshold → alert
-                                    ▼
-                           NotifierManager
-                            ├─ console + log file
-                            ├─ webhook (Discord/Slack/custom)
-                            └─ email (SMTP)
+ Browser ─▶ Next.js dashboard / API ─▶ Prisma ─▶ Supabase Postgres
+                                            ▲
+ Supabase pg_cron ──(every 15 min)──▶ GET /api/cron  (Bearer CRON_SECRET)
+                                            │
+                                   monitor.checkAll()
+                                     ├─ PriceFetcher (mock | pdd)
+                                     ├─ record price history
+                                     └─ edge-triggered threshold → alert
+                                           ├─ console (Vercel logs)
+                                           ├─ webhook (Discord/Slack/custom)
+                                           └─ email (Resend)
 ```
 
-**Data source is pluggable.** The app is built against a `PriceFetcher` interface
-([`pddapp/fetchers/base.py`](pddapp/fetchers/base.py)) so the whole pipeline —
-scheduling, history, thresholds, alerts — runs **today** on a built-in **mock
-fetcher** that synthesizes realistic, drifting prices with no network access.
-Swap in a real Pinduoduo source later by implementing one class.
+**Edge-triggered alerts:** an alert fires once when a price crosses *below* the
+threshold — not on every check while it stays low — and re-arms after the price
+climbs back above.
 
 ## Why the real Pinduoduo fetcher is a stub
 
 Pinduoduo offers **no open, unauthenticated price API**, and its consumer
-site/app is protected by aggressive anti-bot measures (`anti_content` request
-signing, device fingerprinting, captchas). The two realistic ways to populate
-real prices, documented in [`pddapp/fetchers/pdd.py`](pddapp/fetchers/pdd.py):
+site/app is guarded by aggressive anti-bot measures (`anti_content` request
+signing, device fingerprinting, captchas). The data layer is therefore built
+behind a `PriceFetcher` interface ([`src/lib/fetchers/types.ts`](src/lib/fetchers/types.ts))
+so the full pipeline runs **today** on a **mock fetcher** that synthesizes
+realistic, drifting prices. To wire up real data, implement
+[`src/lib/fetchers/pdd.ts`](src/lib/fetchers/pdd.ts) using either:
 
-1. **Official affiliate API — Duoduo Jinbao / 多多进宝 (recommended).** Register at
-   <https://open.pinduoduo.com>, get `client_id` / `client_secret` + a promotion
-   `pid`, and call `pdd.ddk.goods.detail`. Stable and legal.
-2. **Headless-browser scraping (Playwright).** No credentials, but brittle and
-   higher ToS risk.
+1. **Official affiliate API — Duoduo Jinbao / 多多进宝 (recommended, stable, legal).**
+   Register at <https://open.pinduoduo.com>, get `client_id` / `client_secret` + a
+   promotion `pid`, call `pdd.ddk.goods.detail`, read `min_group_price`. Outbound
+   calls from a Vercel serverless function are fine.
+2. **Headless-browser scraping** — not viable on Vercel's default runtime; needs a
+   hosted browser service and is brittle.
 
-Until one is wired up, products with `fetcher="pdd"` simply record a clear error
-on each check instead of crashing the monitor.
+Products using `fetcher="pdd"` record a clear error each check until then.
 
-## Quick start
+## Deploy to Vercel
+
+1. **Create a Supabase project** → Project Settings → Database → Connection string.
+   Copy the **pooled** (port 6543) and **direct** (port 5432) URIs.
+2. **Import this repo into Vercel** and set environment variables (see
+   [`.env.example`](.env.example)):
+   - `DATABASE_URL` (pooled, add `?pgbouncer=true&connection_limit=1`)
+   - `DIRECT_URL` (direct)
+   - `CRON_SECRET` (a long random string)
+   - `RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO` (email alerts)
+   - `ALERT_WEBHOOK_URL` (optional)
+3. **Create the database tables.** Locally with the same env set:
+   ```bash
+   npm install
+   npx prisma db push
+   ```
+4. **Deploy.** Vercel runs `npm run build` (which also runs `prisma generate`).
+5. **Schedule checks.** Either:
+   - **Supabase pg_cron (recommended, frequent, free):** run
+     [`supabase/schedule.sql`](supabase/schedule.sql) in the Supabase SQL editor
+     after editing the URL and `CRON_SECRET`. Runs every 15 min.
+   - **Vercel Cron:** [`vercel.json`](vercel.json) already defines a daily
+     `/api/cron` job (Vercel injects `Authorization: Bearer $CRON_SECRET`).
+     The free Hobby plan caps cron at **once per day**; use pg_cron or an external
+     scheduler (cron-job.org, GitHub Actions) for more frequent checks.
+
+## Run locally
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env          # optional: configure alerts
-python run.py                 # serves http://localhost:8000
+cp .env.example .env        # fill in DATABASE_URL / DIRECT_URL (and optional alerts)
+npm install
+npx prisma db push
+npm run dev                 # http://localhost:3000
 ```
 
-Open <http://localhost:8000>, add a product (name, PDD goods_id/URL, threshold),
-and click **Check now** — with the default mock fetcher you'll see prices, history,
-and threshold alerts immediately.
-
-## Configuration (`.env`)
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CHECK_INTERVAL_SECONDS` | `300` | How often the scheduler re-checks all products |
-| `DEFAULT_FETCHER` | `mock` | Fetcher for new products (`mock` or `pdd`) |
-| `CURRENCY_SYMBOL` | `¥` | Symbol shown in the UI |
-| `CONSOLE_ENABLED` | `true` | Log alerts to console + `ALERT_LOG_FILE` |
-| `WEBHOOK_ENABLED` / `WEBHOOK_URL` | `false` | POST alerts to a Discord/Slack/custom webhook |
-| `EMAIL_ENABLED` + `SMTP_*` | `false` | Email alerts over SMTP (e.g. Gmail app password) |
-
-Alerts are **edge-triggered**: an alert fires once when a price crosses *below* the
-threshold, not on every check while it stays low. It re-arms once the price climbs
-back above.
+Add a product (name, PDD goods_id/URL, threshold), click **Check now** — with the
+mock fetcher you'll see prices, history, and threshold alerts immediately.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/products` | List watched products |
-| `POST` | `/api/products` | Add a product |
+| `GET` | `/api/products` | List products |
+| `POST` | `/api/products` | Add a product (`{name, goodsId, thresholdPrice, url?, fetcher?}`) |
 | `GET` | `/api/products/{id}` | Get one product |
-| `PATCH` | `/api/products/{id}` | Update threshold / pause / fetcher |
+| `PATCH` | `/api/products/{id}` | Update name / threshold / fetcher / active |
 | `DELETE` | `/api/products/{id}` | Remove a product |
 | `GET` | `/api/products/{id}/history` | Price history |
 | `POST` | `/api/products/{id}/check` | Check now |
-| `POST` | `/api/check-all` | Check every active product |
+| `GET`/`POST` | `/api/cron` | Check all active products (requires `CRON_SECRET`) |
 | `GET` | `/api/health` | Health probe |
-
-## Tests
-
-```bash
-pytest
-```
-
-Covers fetcher registry/fallback, the edge-triggered alert logic (crossing,
-no re-alert, re-arm, out-of-stock, fetch failure), and notifier fan-out /
-failure isolation.
 
 ## Project layout
 
 ```
-pddapp/
-  config.py          # env-driven settings
-  database.py        # SQLAlchemy engine/session
-  models.py          # Product, PriceHistory, AlertLog
-  monitor.py         # core check + edge-triggered alerting
-  scheduler.py       # APScheduler background job
-  main.py            # FastAPI routes (web + JSON API)
-  fetchers/          # pluggable price sources (base, mock, pdd, registry)
-  notifiers/         # console, webhook, email + fan-out manager
-  templates/ static/ # dashboard UI
-tests/
-run.py               # uvicorn entry point
+prisma/schema.prisma         Product, PriceHistory, AlertLog
+src/lib/
+  config.ts                  env-driven settings
+  db.ts                      Prisma client singleton
+  monitor.ts                 check + edge-triggered alerting
+  fetchers/                  pluggable price sources (types, mock, pdd, registry)
+  notifiers/                 console, webhook, email (Resend) + fan-out manager
+src/app/
+  page.tsx                   dashboard (server component)
+  products/[id]/page.tsx     product detail + history
+  actions.ts                 server actions (add/delete/toggle/check)
+  api/                       JSON API + secured /api/cron
+supabase/schedule.sql        pg_cron + pg_net scheduled checks
+vercel.json                  Vercel Cron fallback (daily)
 ```
