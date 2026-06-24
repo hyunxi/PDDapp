@@ -5,6 +5,7 @@
 import { config } from "../config";
 import { ConsoleNotifier } from "./console";
 import { EmailNotifier } from "./email";
+import { WebPushNotifier } from "./push";
 import { WebhookNotifier } from "./webhook";
 import { Alert, Notifier } from "./types";
 
@@ -39,6 +40,9 @@ export class NotifierManager {
 export function buildDefaultManager(): NotifierManager {
   const notifiers: Notifier[] = [new ConsoleNotifier()];
 
+  if (config.vapidPublicKey && config.vapidPrivateKey) {
+    notifiers.push(new WebPushNotifier());
+  }
   if (config.alertWebhookUrl) {
     notifiers.push(new WebhookNotifier(config.alertWebhookUrl));
   }

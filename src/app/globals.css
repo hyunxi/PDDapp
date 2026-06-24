@@ -227,8 +227,64 @@ a {
   padding: 18px;
 }
 
+/* Horizontal scroll container so wide tables don't break the mobile layout. */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Bottom action bar for install / enable-alerts (PWA). */
+.pwa-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: #fff;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.pwa-bar-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pwa-hint {
+  font-size: 0.85rem;
+}
+.pwa-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 @media (max-width: 640px) {
+  .container {
+    margin: 16px auto;
+  }
+  .topbar {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .panel {
+    padding: 16px;
+  }
   .form-grid {
     grid-template-columns: 1fr;
+  }
+  .grid th,
+  .grid td {
+    padding: 8px 8px;
+  }
+  .actions {
+    white-space: normal;
+  }
+  .actions form {
+    display: inline-block;
+    margin-bottom: 4px;
   }
 }

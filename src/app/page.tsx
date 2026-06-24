@@ -65,6 +65,7 @@ export default async function Dashboard() {
         {products.length === 0 ? (
           <p className="muted">No products yet. Add one below to start monitoring.</p>
         ) : (
+          <div className="table-wrap">
           <table className="grid">
             <thead>
               <tr>
@@ -111,6 +112,7 @@ export default async function Dashboard() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 

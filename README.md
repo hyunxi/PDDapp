@@ -1,14 +1,27 @@
 # PDDapp — Pinduoduo Price Monitor
 
 A web app that watches **Pinduoduo (拼多多)** products and alerts you when a price
-drops to or below a threshold you set. Built to deploy on **Vercel**.
+drops to or below a threshold you set. It's an **installable PWA** — add it to
+your phone's home screen and get **push notifications** when a price drops.
+Built to deploy on **Vercel**.
 
 - **Next.js (App Router, TypeScript)** — dashboard + JSON API
+- **Installable PWA** — manifest, service worker, offline shell, home-screen icon
+- **Web Push notifications** (VAPID) — alerts reach the phone even when closed
 - **Supabase Postgres** via **Prisma** — products, price history, alert log
 - **Supabase `pg_cron`** (or Vercel Cron) — periodic price checks
 - **Resend** email + webhook + console alerts
 - **Pluggable price fetchers** — a built-in mock fetcher runs the whole app today;
   a real Pinduoduo source plugs in later
+
+## Why a PWA (and not a "native" app)
+
+Phones can't reliably run a background price-checker on their own — iOS suspends
+and throttles background tasks, so an on-device-only app would mostly catch price
+drops only while it's open. The dependable pattern (used by CamelCamelCamel,
+Keepa, etc.) is: a **server** does the monitoring and **pushes** a notification
+to the phone. This app is that: an installable PWA front-end backed by a
+server-side cron, delivering alerts via Web Push.
 
 ## How it works
 
@@ -22,6 +35,7 @@ drops to or below a threshold you set. Built to deploy on **Vercel**.
                                      ├─ record price history
                                      └─ edge-triggered threshold → alert
                                            ├─ console (Vercel logs)
+                                           ├─ web push → installed PWA on phone
                                            ├─ webhook (Discord/Slack/custom)
                                            └─ email (Resend)
 ```
@@ -60,6 +74,8 @@ Products using `fetcher="pdd"` record a clear error each check until then.
    - `CRON_SECRET` (a long random string)
    - `RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO` (email alerts)
    - `ALERT_WEBHOOK_URL` (optional)
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (push;
+     generate a key pair with `npx web-push generate-vapid-keys`)
 3. **Create the database tables.** Locally with the same env set:
    ```bash
    npm install
@@ -87,6 +103,24 @@ npm run dev                 # http://localhost:3000
 Add a product (name, PDD goods_id/URL, threshold), click **Check now** — with the
 mock fetcher you'll see prices, history, and threshold alerts immediately.
 
+## Install on your phone
+
+Open the deployed HTTPS URL on your phone, then:
+
+- **Android / Chrome:** tap the **Install app** button in the bottom bar (or
+  browser menu → *Install app* / *Add to Home screen*), then tap **Enable alerts**
+  to grant notifications.
+- **iPhone / Safari:** tap **Share → Add to Home Screen**, open the app from the
+  new icon, then tap **Enable alerts**. (iOS only allows Web Push for PWAs that
+  were added to the Home Screen, on iOS 16.4+.)
+
+Once "Enable alerts" succeeds, the device is subscribed and any price-drop the
+server detects is pushed to it — even when the app is closed. Push requires the
+`VAPID_*` env vars to be set; without them the app still works, just without push.
+
+> Note: a PWA must be served over HTTPS for the service worker and push to work,
+> so install it from the deployed URL (Vercel), not from `http://localhost`.
+
 ## API
 
 | Method | Path | Description |
@@ -99,23 +133,30 @@ mock fetcher you'll see prices, history, and threshold alerts immediately.
 | `GET` | `/api/products/{id}/history` | Price history |
 | `POST` | `/api/products/{id}/check` | Check now |
 | `GET`/`POST` | `/api/cron` | Check all active products (requires `CRON_SECRET`) |
+| `POST`/`DELETE` | `/api/push/subscribe` | Save / remove a Web Push subscription |
 | `GET` | `/api/health` | Health probe |
 
 ## Project layout
 
 ```
-prisma/schema.prisma         Product, PriceHistory, AlertLog
+prisma/schema.prisma         Product, PriceHistory, AlertLog, PushSubscription
 src/lib/
-  config.ts                  env-driven settings
+  config.ts                  env-driven settings (incl. VAPID keys)
   db.ts                      Prisma client singleton
   monitor.ts                 check + edge-triggered alerting
   fetchers/                  pluggable price sources (types, mock, pdd, registry)
-  notifiers/                 console, webhook, email (Resend) + fan-out manager
+  notifiers/                 console, push, webhook, email + fan-out manager
 src/app/
   page.tsx                   dashboard (server component)
   products/[id]/page.tsx     product detail + history
   actions.ts                 server actions (add/delete/toggle/check)
-  api/                       JSON API + secured /api/cron
+  api/                       JSON API, secured /api/cron, /api/push/subscribe
+  layout.tsx                 PWA metadata + service-worker registration
+src/components/PwaSetup.tsx  install prompt + push opt-in (client)
+public/
+  manifest.webmanifest       PWA manifest
+  sw.js                      service worker (offline shell + push)
+  icons/                     app icons (incl. maskable + apple-touch)
 supabase/schedule.sql        pg_cron + pg_net scheduled checks
 vercel.json                  Vercel Cron fallback (daily)
 ```

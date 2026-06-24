@@ -10,4 +10,11 @@ export const config = {
   alertEmailTo: process.env.ALERT_EMAIL_TO || "",
 
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL || "",
+
+  // Web Push (VAPID). The public key is also exposed to the browser via
+  // NEXT_PUBLIC_VAPID_PUBLIC_KEY (same value). The private key stays server-side.
+  vapidPublicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "",
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || "",
+  vapidSubject: process.env.VAPID_SUBJECT || "mailto:alerts@pddapp.local",
 };
+

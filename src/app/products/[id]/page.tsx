@@ -78,6 +78,7 @@ export default async function ProductDetail({ params }: { params: { id: string }
       {product.alerts.length > 0 && (
         <section className="panel">
           <h2>Alert history</h2>
+          <div className="table-wrap">
           <table className="grid">
             <thead>
               <tr>
@@ -98,6 +99,7 @@ export default async function ProductDetail({ params }: { params: { id: string }
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -108,6 +110,7 @@ export default async function ProductDetail({ params }: { params: { id: string }
         {product.history.length === 0 ? (
           <p className="muted">No checks recorded yet.</p>
         ) : (
+          <div className="table-wrap">
           <table className="grid">
             <thead>
               <tr>
@@ -143,6 +146,7 @@ export default async function ProductDetail({ params }: { params: { id: string }
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </>

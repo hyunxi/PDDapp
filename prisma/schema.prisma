@@ -53,6 +53,16 @@ model PriceHistory {
   @@map("price_history")
 }
 
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("push_subscriptions")
+}
+
 model AlertLog {
   id             Int      @id @default(autoincrement())
   productId      Int      @map("product_id")
