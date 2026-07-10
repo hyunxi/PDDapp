@@ -1,5 +1,6 @@
 // Fetcher registry — maps a fetcher name to a singleton instance.
 
+import { ExternalFetcher } from "./external";
 import { MockFetcher } from "./mock";
 import { PinduoduoFetcher } from "./pdd";
 import { PriceFetcher } from "./types";
@@ -12,6 +13,7 @@ function register(f: PriceFetcher) {
 
 register(new MockFetcher());
 register(new PinduoduoFetcher());
+register(new ExternalFetcher());
 
 export function availableFetchers(): string[] {
   return Object.keys(registry).sort();

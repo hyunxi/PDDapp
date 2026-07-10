@@ -1,0 +1,13 @@
+{
+  "name": "pddapp-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Best-effort Pinduoduo price scraper that runs on GitHub Actions and posts prices to the PDDapp /api/ingest endpoint.",
+  "scripts": {
+    "scrape": "node scrape.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.47.2"
+  }
+}

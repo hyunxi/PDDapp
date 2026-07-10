@@ -8,7 +8,7 @@
 import type { Product } from "@prisma/client";
 import { config } from "./config";
 import { prisma } from "./db";
-import { getFetcher } from "./fetchers";
+import { FetchResult, getFetcher } from "./fetchers";
 import { NotifierManager, buildDefaultManager, makeAlert } from "./notifiers";
 
 export interface CheckOutcome {
@@ -22,13 +22,17 @@ export interface CheckOutcome {
   error?: string | null;
 }
 
+// Products with this fetcher are fed by the external scraper via /api/ingest,
+// so the scheduled fetch skips them (it has no way to get their price itself).
+export const EXTERNAL_FETCHER = "external";
+
 export async function checkProduct(
   product: Product,
   manager: NotifierManager,
 ): Promise<CheckOutcome> {
   const fetcher = getFetcher(product.fetcher);
 
-  let result;
+  let result: FetchResult;
   try {
     result = await fetcher.fetch(product.goodsId, product.url);
   } catch (err) {
@@ -39,6 +43,16 @@ export async function checkProduct(
     };
   }
 
+  return applyResult(product, result, manager);
+}
+
+// Record an observation against a product and fire an edge-triggered alert.
+// Shared by the scheduled fetch (checkProduct) and external ingest (ingestPrice).
+export async function applyResult(
+  product: Product,
+  result: FetchResult,
+  manager: NotifierManager,
+): Promise<CheckOutcome> {
   const now = new Date();
 
   // Always record the observation (success or failure) for history/debugging.
@@ -126,7 +140,11 @@ export async function checkProduct(
 
 export async function checkAll(manager?: NotifierManager): Promise<CheckOutcome[]> {
   const mgr = manager ?? buildDefaultManager();
-  const products = await prisma.product.findMany({ where: { active: true } });
+  // Skip externally-fed products — their price arrives via /api/ingest, not a
+  // fetcher, so "checking" them here would only record errors.
+  const products = await prisma.product.findMany({
+    where: { active: true, fetcher: { not: EXTERNAL_FETCHER } },
+  });
   const outcomes: CheckOutcome[] = [];
   for (const product of products) {
     outcomes.push(await checkProduct(product, mgr));
@@ -141,4 +159,29 @@ export async function checkOne(
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) return null;
   return checkProduct(product, manager ?? buildDefaultManager());
+}
+
+// Apply an externally-scraped price (from /api/ingest) to every active product
+// sharing the given goodsId. Returns one outcome per matched product.
+export async function ingestPrice(
+  goodsId: string,
+  data: { price: number; originalPrice?: number | null; inStock?: boolean; title?: string | null },
+  manager?: NotifierManager,
+): Promise<CheckOutcome[]> {
+  const mgr = manager ?? buildDefaultManager();
+  const products = await prisma.product.findMany({
+    where: { active: true, goodsId },
+  });
+  const result: FetchResult = {
+    ok: true,
+    price: data.price,
+    originalPrice: data.originalPrice ?? null,
+    inStock: data.inStock ?? true,
+    title: data.title ?? null,
+  };
+  const outcomes: CheckOutcome[] = [];
+  for (const product of products) {
+    outcomes.push(await applyResult(product, result, mgr));
+  }
+  return outcomes;
 }

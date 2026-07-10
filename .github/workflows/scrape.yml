@@ -1,0 +1,41 @@
+name: Scrape Pinduoduo prices
+
+# Best-effort scraper: runs a real Chromium browser (which Vercel can't) and
+# posts prices to the app's /api/ingest. Requires repo secrets:
+#   APP_URL      e.g. https://pd-dapp.vercel.app
+#   CRON_SECRET  same value as in Vercel
+#   PDD_COOKIE   (optional) your logged-in PDD cookie string
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # every 30 minutes (GitHub may delay under load)
+  workflow_dispatch: {} # lets you run it manually from the Actions tab
+
+concurrency:
+  group: scrape
+  cancel-in-progress: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: scraper
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run scraper
+        working-directory: scraper
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PDD_COOKIE: ${{ secrets.PDD_COOKIE }}
+        run: node scrape.mjs
