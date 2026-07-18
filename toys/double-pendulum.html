@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Double Pendulum — Thought Toys</title>
+<style>
+  :root {
+    --bg: #0e0f13;
+    --ink: #e9e9ee;
+    --muted: #9aa0ad;
+    --line: rgba(255,255,255,.12);
+    --accent: #ffd166;
+    --accent2: #4cc9f0;
+    --card: rgba(255,255,255,.04);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f5f1; --ink: #16171b; --muted: #5c6270;
+      --line: rgba(0,0,0,.12); --accent: #d98a00; --accent2: #0a7ea4;
+      --card: rgba(0,0,0,.03);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+  }
+  header { padding: 22px 20px 8px; text-align: center; }
+  h1 { margin: 0; font-size: clamp(20px, 4vw, 28px); letter-spacing: -.02em; font-weight: 650; }
+  header p { margin: 6px auto 0; max-width: 46ch; color: var(--muted); font-size: 14px; }
+  .stage { flex: 1; display: grid; place-items: center; padding: 12px; min-height: 0; }
+  canvas {
+    width: min(92vw, 560px); height: min(92vw, 560px); max-height: 62vh;
+    aspect-ratio: 1; border-radius: 18px; border: 1px solid var(--line);
+    background: var(--card); touch-action: none; cursor: grab;
+  }
+  canvas.drag { cursor: grabbing; }
+  .controls {
+    display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    padding: 4px 16px 8px;
+  }
+  button {
+    font: inherit; color: var(--ink); background: var(--card);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 9px 16px; cursor: pointer; transition: .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  .hint { text-align: center; color: var(--muted); font-size: 13px; padding: 0 16px 18px; }
+  a { color: var(--accent2); }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Two pendulums, one hair apart</h1>
+    <p>Both start from almost the same place — a fraction of a degree between them.
+       Determinism is intact; prediction is not.</p>
+  </header>
+
+  <div class="stage">
+    <canvas id="c" width="560" height="560" aria-label="Double pendulum simulation"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="reset">Drop again</button>
+    <button id="trails">Trails: on</button>
+    <button id="pause">Pause</button>
+  </div>
+  <p class="hint">Drag inside the box to aim the pendulum, then release to drop it.</p>
+  <footer>thought toy · <a href="./index.html">back to the cabinet</a></footer>
+
+<script>
+(() => {
+  const c = document.getElementById("c");
+  const ctx = c.getContext("2d");
+  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  const G = 1.0, L1 = 1, L2 = 1, M1 = 1, M2 = 1;
+  let A, B;              // the two systems
+  let trails = true, paused = false, dragging = false;
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  function sizeCanvas() {
+    const r = c.getBoundingClientRect();
+    c.width = r.width * DPR; c.height = r.height * DPR;
+  }
+  window.addEventListener("resize", sizeCanvas);
+
+  function makeSystem(a1) {
+    return { a1, a2: a1, p1: 0, p2: 0, trail: [] };
+  }
+  function reset(a1 = 2.3) {
+    A = makeSystem(a1);
+    B = makeSystem(a1 + 0.0005);   // one hair apart
+  }
+  reset();
+
+  // Lagrangian double pendulum, RK4-ish via the standard angular-accel equations.
+  function deriv(s) {
+    const { a1, a2, p1, p2 } = s; // here p1,p2 are angular velocities
+    const d = a1 - a2, cd = Math.cos(d), sd = Math.sin(d);
+    const den = 2*M1 + M2 - M2*Math.cos(2*d);
+    const da1 = (-G*(2*M1+M2)*Math.sin(a1) - M2*G*Math.sin(a1-2*a2)
+                 - 2*sd*M2*(p2*p2*L2 + p1*p1*L1*cd)) / (L1*den);
+    const da2 = (2*sd*(p1*p1*L1*(M1+M2) + G*(M1+M2)*Math.cos(a1)
+                 + p2*p2*L2*M2*cd)) / (L2*den);
+    return { a1: p1, a2: p2, p1: da1, p2: da2 };
+  }
+  function step(s, h) {
+    const k1 = deriv(s);
+    const s2 = { a1: s.a1+k1.a1*h/2, a2: s.a2+k1.a2*h/2, p1: s.p1+k1.p1*h/2, p2: s.p2+k1.p2*h/2 };
+    const k2 = deriv(s2);
+    const s3 = { a1: s.a1+k2.a1*h/2, a2: s.a2+k2.a2*h/2, p1: s.p1+k2.p1*h/2, p2: s.p2+k2.p2*h/2 };
+    const k3 = deriv(s3);
+    const s4 = { a1: s.a1+k3.a1*h, a2: s.a2+k3.a2*h, p1: s.p1+k3.p1*h, p2: s.p2+k3.p2*h };
+    const k4 = deriv(s4);
+    s.a1 += (k1.a1+2*k2.a1+2*k3.a1+k4.a1)*h/6;
+    s.a2 += (k1.a2+2*k2.a2+2*k3.a2+k4.a2)*h/6;
+    s.p1 += (k1.p1+2*k2.p1+2*k3.p1+k4.p1)*h/6;
+    s.p2 += (k1.p2+2*k2.p2+2*k3.p2+k4.p2)*h/6;
+  }
+
+  function pos(s, W) {
+    const cx = W/2, cy = W*0.36, scale = W*0.19;
+    const x1 = cx + scale*Math.sin(s.a1), y1 = cy + scale*Math.cos(s.a1);
+    const x2 = x1 + scale*Math.sin(s.a2), y2 = y1 + scale*Math.cos(s.a2);
+    return { cx, cy, x1, y1, x2, y2 };
+  }
+
+  function drawArm(p, color, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.lineWidth = 3 * DPR; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(p.cx, p.cy); ctx.lineTo(p.x1, p.y1); ctx.lineTo(p.x2, p.y2); ctx.stroke();
+    ctx.fillStyle = color;
+    for (const [x,y,r] of [[p.x1,p.y1,4],[p.x2,p.y2,6]]) {
+      ctx.beginPath(); ctx.arc(x, y, r*DPR, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame() {
+    const W = c.width;
+    if (!paused && !dragging) {
+      for (let i = 0; i < 8; i++) { step(A, 0.06); step(B, 0.06); }
+      for (const s of [A, B]) {
+        const p = pos(s, W);
+        s.trail.push([p.x2, p.y2]);
+        if (s.trail.length > 260) s.trail.shift();
+      }
+    }
+    ctx.clearRect(0, 0, W, W);
+
+    if (trails) {
+      for (const [s, col] of [[A, cssVar("--accent")], [B, cssVar("--accent2")]]) {
+        ctx.strokeStyle = col; ctx.lineWidth = 1.5 * DPR;
+        for (let i = 1; i < s.trail.length; i++) {
+          ctx.globalAlpha = (i / s.trail.length) * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(s.trail[i-1][0], s.trail[i-1][1]);
+          ctx.lineTo(s.trail[i][0], s.trail[i][1]);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    drawArm(pos(B, W), cssVar("--accent2"), 0.85);
+    drawArm(pos(A, W), cssVar("--accent"), 1);
+    requestAnimationFrame(frame);
+  }
+
+  // Dragging to aim
+  function aimFrom(ev) {
+    const r = c.getBoundingClientRect();
+    const t = ev.touches ? ev.touches[0] : ev;
+    const x = (t.clientX - r.left) / r.width - 0.5;
+    const y = (t.clientY - r.top) / r.height - 0.36;
+    const a = Math.atan2(x, y);
+    reset(a);
+  }
+  const down = e => { dragging = true; c.classList.add("drag"); aimFrom(e); e.preventDefault(); };
+  const move = e => { if (dragging) { aimFrom(e); e.preventDefault(); } };
+  const up = () => { dragging = false; c.classList.remove("drag"); };
+  c.addEventListener("mousedown", down); c.addEventListener("touchstart", down, {passive:false});
+  window.addEventListener("mousemove", move); c.addEventListener("touchmove", move, {passive:false});
+  window.addEventListener("mouseup", up); window.addEventListener("touchend", up);
+
+  document.getElementById("reset").onclick = () => reset(2.3);
+  document.getElementById("trails").onclick = e => {
+    trails = !trails; e.target.textContent = "Trails: " + (trails ? "on" : "off");
+    if (!trails) { A.trail = []; B.trail = []; }
+  };
+  document.getElementById("pause").onclick = e => {
+    paused = !paused; e.target.textContent = paused ? "Resume" : "Pause";
+  };
+
+  sizeCanvas();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
